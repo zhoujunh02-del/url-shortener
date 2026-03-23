@@ -6,3 +6,9 @@ services:
       MYSQ_DATABASE: urlshorterner
     ports:
       - "3306:3306"
+  
+
+  redis:
+    image: redis:7.0
+    ports:
+      - "6379:6379"
