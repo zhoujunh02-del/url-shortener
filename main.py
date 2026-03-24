@@ -33,12 +33,19 @@ def shorten_url(request: ShortenRequest):
 def redirect_url(short_code: str):
     orginal_url = redis_client.get(short_code)
     if orginal_url:
+        redis_client.incr(f"clicks:{short_code}")
         return RedirectResponse(url=orginal_url, status_code=302)
     db = SessionLocal()
     # get first URL whose short_code == short_code
     entry = db.query(URL).filter(URL.short_code == short_code).first()
     db.close()
     if not entry:
-        raise HTTPException(status_code = 404, detail = "Short URL not fount")
+        raise HTTPException(status_code = 404, detail = "Short URL not found")
     redis_client.setex(short_code, 3600, entry.original_url)
+    redis_client.incr(f"clicks:{short_code}")
     return RedirectResponse(url=entry.original_url, status_code=302)
+
+@app.get("/stats/{short_code}")
+def get_stats(short_code: str):
+    clicks = redis_client.get(f"clicks:{short_code}")
+    return {"short_code": short_code, "clicks": int(clicks) if clicks else 0}
