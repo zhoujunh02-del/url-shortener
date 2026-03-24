@@ -10,6 +10,7 @@ app = FastAPI()
 
 class ShortenRequest(BaseModel):
     url: str
+    custom_code : str | None = None
 
 def generate_short_code():
     chars = string.ascii_letters + string.digits  # a-z A-Z + 0-9
@@ -28,9 +29,18 @@ def shorten_url(request: Request, body: ShortenRequest):
     if is_rate_limited(ip):
         raise HTTPException(status_code=429, detail="Too many requests")
     
+    if body.custom_code:
+        short_code = body.custom_code
+        db = SessionLocal()
+        existing = db.query(URL).filter(URL.short_code == short_code).first()
+        db.close()
+        if existing:
+            raise HTTPException(status_code=409,detail="Custom code already taken")
+    else:
+        short_code = generate_short_code()
+
     db = SessionLocal()     # open database
     try:
-        short_code = generate_short_code()
         entry = URL(short_code = short_code, original_url = body.url)    # record
         db.add(entry)           # add to MySQL
         db.commit()             # commit
