@@ -50,7 +50,7 @@ def shorten_url(request: Request, body: ShortenRequest):
     finally:
         db.close()
     redis_client.setex(short_code, 3600, body.url)
-    return {"short_url": f"http://localhost:8000/{short_code}"}
+    return {"short_url": f"http://52.205.252.119:8000/{short_code}"}
 
 
 @app.get("/{short_code}")
