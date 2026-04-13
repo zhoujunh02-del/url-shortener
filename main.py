@@ -160,6 +160,8 @@ def shorten_url(
 
 @app.get("/{short_code}")
 def redirect_url(short_code: str):
+    if short_code not in bloom:
+        raise HTTPException(status_code=404, detail="Short URL not found")
     original_url = redis_client.get(short_code)
     if original_url:
         redis_client.incr(f"clicks:{short_code}")
