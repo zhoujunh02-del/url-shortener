@@ -2,8 +2,12 @@ from fastapi import FastAPI, HTTPException, Request, Depends
 from fastapi.responses import RedirectResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel
+import os
 import random
 import string
+import time
+import uuid
+from pybloom_live import ScalableBloomFilter
 from database import SessionLocal, URL, User
 from redis_client import redis_client
 from auth import (
@@ -12,7 +16,22 @@ from auth import (
     get_current_user, get_optional_user,
 )
 
+BASE_URL = os.environ.get("BASE_URL", "http://localhost:8000")
+
 app = FastAPI()
+
+# Bloom filter seeded from existing short codes on startup
+bloom = ScalableBloomFilter(mode=ScalableBloomFilter.SMALL_SET_GROWTH, error_rate=0.001)
+
+def _init_bloom():
+    db = SessionLocal()
+    try:
+        for (code,) in db.query(URL.short_code).all():
+            bloom.add(code)
+    finally:
+        db.close()
+
+_init_bloom()
 
 
 class ShortenRequest(BaseModel):
@@ -31,12 +50,27 @@ def generate_short_code():
     return "".join(random.choices(chars, k=6))
 
 
+RATE_LIMIT_SCRIPT = """
+local key = KEYS[1]
+local now = tonumber(ARGV[1])
+local window = tonumber(ARGV[2])
+local limit = tonumber(ARGV[3])
+local member = ARGV[4]
+
+redis.call('zremrangebyscore', key, 0, now - window)
+redis.call('zadd', key, now, member)
+local count = redis.call('zcard', key)
+redis.call('expire', key, window)
+return count
+"""
+
 def is_rate_limited(ip: str) -> bool:
     key = f"rate:{ip}"
-    count = redis_client.incr(key)
-    if count == 1:
-        redis_client.expire(key, 60)
-    return count > 10
+    now = time.time()
+    window = 60
+    limit = 10
+    count = redis_client.eval(RATE_LIMIT_SCRIPT, 1, key, now, window, limit, str(uuid.uuid4()))
+    return count > limit
 
 
 @app.post("/register", status_code=201)
@@ -89,14 +123,22 @@ def shorten_url(
         raise HTTPException(status_code=429, detail="Too many requests")
 
     if body.custom_code:
+        if len(body.custom_code) > 6:
+            raise HTTPException(status_code=422, detail="Custom code must be 6 characters or fewer")
         short_code = body.custom_code
-        db = SessionLocal()
-        existing = db.query(URL).filter(URL.short_code == short_code).first()
-        db.close()
-        if existing:
-            raise HTTPException(status_code=409, detail="Custom code already taken")
+        if short_code in bloom:
+            db = SessionLocal()
+            existing = db.query(URL).filter(URL.short_code == short_code).first()
+            db.close()
+            if existing:
+                raise HTTPException(status_code=409, detail="Custom code already taken")
     else:
-        short_code = generate_short_code()
+        for _ in range(5):
+            short_code = generate_short_code()
+            if short_code not in bloom:
+                break
+        else:
+            raise HTTPException(status_code=500, detail="Failed to generate unique short code")
 
     user_id = current_user["id"] if current_user else None
 
@@ -111,8 +153,9 @@ def shorten_url(
     finally:
         db.close()
 
+    bloom.add(short_code)
     redis_client.setex(short_code, 3600, body.url)
-    return {"short_url": f"http://52.205.252.119:8000/{short_code}"}
+    return {"short_url": f"{BASE_URL}/{short_code}"}
 
 
 @app.get("/{short_code}")

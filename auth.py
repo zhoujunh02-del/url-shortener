@@ -4,7 +4,9 @@ from passlib.context import CryptContext
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 
-SECRET_KEY = "change-this-to-a-random-secret-in-production"
+import os
+
+SECRET_KEY = os.environ.get("SECRET_KEY", "change-this-to-a-random-secret-in-production")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24 hours
 
