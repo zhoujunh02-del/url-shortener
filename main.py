@@ -178,5 +178,7 @@ def redirect_url(short_code: str):
 
 @app.get("/stats/{short_code}")
 def get_stats(short_code: str):
+    if short_code not in bloom:
+        raise HTTPException(status_code=404, detail="Short URL not found")
     clicks = redis_client.get(f"clicks:{short_code}")
     return {"short_code": short_code, "clicks": int(clicks) if clicks else 0}
